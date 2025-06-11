@@ -1,0 +1,221 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums ---
+
+// Status of an Interface (e.g., in a lab, in storage, broken)
+enum InterfaceStatus {
+  Available // Ready for use, in designated location
+  InUse // Currently being used for a test/task
+  UnderMaintenance // Sent for repair or calibration
+  Retired // No longer in active service but may be kept for records
+  Disposed // Permanently removed from inventory
+}
+
+// Reason for an Interface movement
+enum MovementReason {
+  Deployment // Moving to a new active location for use
+  Retrieval // Moving from an active location back to storage
+  Maintenance // Moving to a maintenance/repair facility
+  Disposal // Moving for permanent disposal
+  Calibration // Moving for calibration
+  TemporaryUse // Moving for a short-term project in a different area
+}
+
+// Type of Maintenance Ticket (e.g., preventive, corrective, calibration)
+enum MaintenanceType {
+  Corrective // Fixing an existing issue
+  Preventive // Scheduled maintenance to prevent future issues
+  Calibration // Adjusting to ensure accuracy
+  Upgrade // Improving hardware/software components
+  Inspection // Routine check-up
+}
+
+// Current status of a Maintenance Ticket
+enum MaintenanceStatus {
+  Open // Ticket created, awaiting action
+  InProgress // Work has started on the ticket
+  Resolved // Work completed, solution applied, awaiting verification
+  Closed // Solution verified, ticket formally closed
+  OnHold // Work temporarily paused
+}
+
+// Priority level for a Maintenance Ticket
+enum PriorityStatus {
+  Low
+  Medium
+  High
+  Critical // Requires immediate attention
+}
+
+// --- Models ---
+
+model Permission {
+  id          String         @id @default(uuid()) @map("id")
+  name        String         @unique
+  description String?
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model Role {
+  id          String         @id @default(uuid()) @map("id")
+  name        String         @unique
+  description String?
+  permissions RolePermission[]
+  createdAt   DateTime       @default(now()) @map("createdAt")
+  updatedAt   DateTime       @updatedAt @map("updatedAt")
+
+  users User[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @map("id")
+  role         Role       @relation(fields: [roleId], references: [id])
+  roleId       String
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  permissionId String
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id          String   @id @default(uuid()) @map("id")
+  matricule   String   @unique
+  email       String   @unique
+  password    String
+  firstName   String
+  lastName    String
+  phoneNumber String
+  roleId      String
+  createdAt   DateTime @default(now()) @map("createdAt")
+  updatedAt   DateTime @updatedAt @map("updatedAt")
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  // Relations for other models (Notification relation removed)
+  usageLogs         UsageLog[]
+  reportedTickets   MaintenanceTicket[] @relation("ReportedBy")
+  assignedTickets   MaintenanceTicket[] @relation("AssignedTo")
+  maintenanceLogs   MaintenanceLog[]
+  interfaceMovementLogs InterfaceMovementLog[]
+
+  @@map("users")
+}
+
+model Location {
+  id          String   @id @default(uuid()) @map("id")
+  name        String   @unique
+  description String?
+  address     String?
+  createdAt   DateTime @default(now()) @map("createdAt")
+  updatedAt   DateTime @updatedAt @map("updatedAt")
+
+  interfaces   Interface[]
+  movementLogsFrom InterfaceMovementLog[] @relation("FromLocation")
+  movementLogsTo InterfaceMovementLog[] @relation("ToLocation")
+
+  @@map("locations")
+}
+
+model Interface {
+  id                String           @id @default(uuid()) @map("id")
+  interfaceName     String?
+  serialNumber      Int?             @unique
+  description       String?
+  type              String
+  status            InterfaceStatus  @default(Available)
+  currentLocationId String?
+  qrCodeData        String?
+  createdAt         DateTime         @default(now()) @map("createdAt")
+  updatedAt         DateTime         @updatedAt @map("updatedAt")
+
+  currentLocation   Location?                @relation(fields: [currentLocationId], references: [id])
+  usageLogs         UsageLog[]
+  maintenanceTickets MaintenanceTicket[]
+  movementLogs      InterfaceMovementLog[]
+
+  @@map("interfaces")
+}
+
+model InterfaceMovementLog {
+  id            String         @id @default(uuid()) @map("id")
+  interfaceId   String
+  fromLocationId String
+  toLocationId  String
+  movedById     String
+  movementDate  DateTime       @default(now())
+  reason        MovementReason?
+  notes         String?
+  createdAt     DateTime       @default(now())
+
+  interface   Interface @relation(fields: [interfaceId], references: [id])
+  fromLocation Location  @relation("FromLocation", fields: [fromLocationId], references: [id])
+  toLocation  Location  @relation("ToLocation", fields: [toLocationId], references: [id])
+  movedBy     User      @relation(fields: [movedById], references: [id])
+
+  @@map("interface_movement_logs")
+}
+
+model MaintenanceTicket {
+  id             String            @id @default(uuid()) @map("id")
+  interfaceId    String
+  type           MaintenanceType   @default(Corrective)
+  status         MaintenanceStatus @default(Open)
+  description    String
+  priority       PriorityStatus    @default(Medium)
+  reportedById   String
+  assignedToId   String?
+  scheduledDate  DateTime?
+  completedDate  DateTime?
+  createdAt      DateTime          @default(now()) @map("createdAt")
+  updatedAt      DateTime          @updatedAt @map("updatedAt")
+
+  interface    Interface         @relation(fields: [interfaceId], references: [id])
+  reportedBy   User              @relation("ReportedBy", fields: [reportedById], references: [id])
+  assignedTo   User?             @relation("AssignedTo", fields: [assignedToId], references: [id])
+  logs         MaintenanceLog[]
+
+  @@map("maintenance_tickets")
+}
+
+model MaintenanceLog {
+  id          String   @id @default(uuid()) @map("id")
+  ticketId    String
+  userId      String
+  description String
+  actionTaken String?
+  createdAt   DateTime @default(now()) @map("createdAt")
+
+  ticket MaintenanceTicket @relation(fields: [ticketId], references: [id])
+  user   User              @relation(fields: [userId], references: [id])
+
+  @@map("maintenance_logs")
+}
+
+model UsageLog {
+  id          String    @id @default(uuid()) @map("id")
+  interfaceId String
+  userId      String
+  startTime   DateTime
+  endTime     DateTime?
+  testDetails String?
+  createdAt   DateTime  @default(now()) @map("createdAt")
+
+  interface Interface @relation(fields: [interfaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@map("usage_logs")
+}
